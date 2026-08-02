@@ -1,0 +1,38 @@
+spring:
+  application:
+    name: drools-otel-app
+  main:
+    banner-mode: "off"
+
+server:
+  port: 8080
+
+otel:
+  exporter:
+    otlp:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4317}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "health,info,metrics,prometheus,env"
+  endpoint:
+    health:
+      show-details: always
+  otlp:
+    metrics:
+      export:
+        url: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4317}/v1/metrics
+        step: 5s
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4317}/v1/traces
+    logging:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4317}/v1/logs
+
+logging:
+  level:
+    root: INFO
+    com.example.droolsotel: DEBUG
+    org.drools: INFO
+    org.kie: INFO

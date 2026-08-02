@@ -1,0 +1,8 @@
+{
+  "customer": {
+    "memberId": "M102",
+    "name": "Alice Wonderland",
+    "age": 30,
+    "purchaseAmount": 600.0
+  }
+}

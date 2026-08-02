@@ -1,0 +1,8 @@
+{
+  "customer": {
+    "name": "Richard Harris",
+    "age": 45,
+    "membershipTier": "REGULAR",
+    "purchaseAmount": 1200.0
+  }
+}

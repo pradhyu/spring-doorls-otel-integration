@@ -1,0 +1,91 @@
+package com.example.droolsotel.rules
+
+import com.example.droolsotel.model.CustomerFact;
+global com.example.droolsotel.service.CustomerDbService dbService;
+
+rule "Fetch Membership Tier from Database"
+    salience 500
+    when
+        $customer : CustomerFact( memberId != null, membershipTier == null || membershipTier == "" )
+    then
+        System.out.println("[Drools Rule Fired] Fetching membership tier for member: " + $customer.getMemberId() + " from HSQLDB...");
+        String tier = dbService.getMembershipTier($customer.getMemberId());
+        modify($customer) {
+            setMembershipTier(tier),
+            addAppliedRule("Fetch Membership Tier from HSQLDB (" + tier + ")")
+        }
+end
+
+rule "Senior Customer Discount"
+    salience 10
+    when
+        $customer : CustomerFact( age >= 65 )
+    then
+        $customer.addDiscount(10.0);
+        $customer.addAppliedRule("Senior Customer Discount (+10%)");
+        System.out.println("[Drools Rule Fired] Senior Customer Discount applied for: " + $customer.getName());
+end
+
+rule "Youth Customer Discount"
+    salience 10
+    when
+        $customer : CustomerFact( age < 18 )
+    then
+        $customer.addDiscount(5.0);
+        $customer.addAppliedRule("Youth Customer Discount (+5%)");
+        System.out.println("[Drools Rule Fired] Youth Customer Discount applied for: " + $customer.getName());
+end
+
+rule "Gold Membership Discount"
+    salience 20
+    when
+        $customer : CustomerFact( membershipTier != null && membershipTier.equalsIgnoreCase("GOLD") )
+    then
+        $customer.addDiscount(15.0);
+        $customer.addAppliedRule("Gold Membership Discount (+15%)");
+        System.out.println("[Drools Rule Fired] Gold Membership Discount applied for: " + $customer.getName());
+end
+
+rule "Platinum Membership Discount"
+    salience 25
+    when
+        $customer : CustomerFact( membershipTier != null && membershipTier.equalsIgnoreCase("PLATINUM") )
+    then
+        $customer.addDiscount(20.0);
+        $customer.addAppliedRule("Platinum Membership Discount (+20%)");
+        System.out.println("[Drools Rule Fired] Platinum Membership Discount applied for: " + $customer.getName());
+end
+
+rule "Large Purchase Bonus Discount"
+    salience 5
+    when
+        $customer : CustomerFact( purchaseAmount >= 500.0 )
+    then
+        $customer.addDiscount(5.0);
+        $customer.addAppliedRule("Large Purchase Bonus Discount (+5%)");
+        System.out.println("[Drools Rule Fired] Large Purchase Bonus Discount applied for: " + $customer.getName());
+end
+
+rule "Evaluate VIP Status"
+    salience 100
+    when
+        $customer : CustomerFact( purchaseAmount >= 1000.0, membershipTier != "PLATINUM" )
+    then
+        System.out.println("[Drools Rule Fired] Upgrade " + $customer.getName() + " to PLATINUM tier due to large purchaseAmount");
+        modify($customer) {
+            setMembershipTier("PLATINUM"),
+            addAppliedRule("Upgrade to PLATINUM tier (Auto-VIP)")
+        }
+end
+
+rule "Evaluate High-Spender Age Reward"
+    salience 30
+    when
+        $customer : CustomerFact( age >= 60, purchaseAmount >= 500.0, membershipTier == "REGULAR" )
+    then
+        System.out.println("[Drools Rule Fired] Upgrade " + $customer.getName() + " to GOLD tier due to age and spending");
+        modify($customer) {
+            setMembershipTier("GOLD"),
+            addAppliedRule("Upgrade to GOLD tier (Senior Reward)")
+        }
+end
