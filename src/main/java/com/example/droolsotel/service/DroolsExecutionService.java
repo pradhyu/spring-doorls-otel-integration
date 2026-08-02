@@ -75,16 +75,31 @@ public class DroolsExecutionService {
             kieSession.setGlobal("dbService", dbService);
 
             // Register OpenTelemetry Event Listeners
-            kieSession.addEventListener(new DroolsOtelAgendaEventListener(tracer, meter));
+            DroolsOtelAgendaEventListener agendaListener = new DroolsOtelAgendaEventListener(tracer, meter);
+            kieSession.addEventListener(agendaListener);
             kieSession.addEventListener(new DroolsOtelRuleRuntimeEventListener(tracer, meter));
 
             try {
-                kieSession.insert(customer);
-                
                 Span fireRulesSpan = tracer.spanBuilder("drools.fireAllRules").startSpan();
                 int firedCount;
                 try (Scope fireScope = fireRulesSpan.makeCurrent()) {
-                    firedCount = kieSession.fireAllRules();
+                    agendaListener.startEvaluationSpan();
+                    
+                    Span insertSpan = tracer.spanBuilder("drools.session.insert").startSpan();
+                    try (Scope insertScope = insertSpan.makeCurrent()) {
+                        kieSession.insert(customer);
+                    } finally {
+                        insertSpan.end();
+                    }
+                    
+                    Span fireInternalSpan = tracer.spanBuilder("drools.session.fireAllRulesInternal").startSpan();
+                    try (Scope fireInternalScope = fireInternalSpan.makeCurrent()) {
+                        firedCount = kieSession.fireAllRules();
+                    } finally {
+                        fireInternalSpan.end();
+                    }
+                    
+                    agendaListener.endEvaluationSpan();
                     fireRulesSpan.setAttribute(AttributeKey.longKey("drools.rules_fired_count"), (long) firedCount);
                 } finally {
                     fireRulesSpan.end();

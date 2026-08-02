@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.Tracer;
+import io.opentelemetry.context.Scope;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,11 +41,24 @@ public class DroolsController {
      */
     @PostMapping(value = "/execute", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<RuleExecutionResponse> executeRules(@RequestBody RuleExecutionRequest request) {
-        Span currentSpan = Span.current();
-        log.info("Received REST POST /api/rules/execute request [TraceID: {}]", currentSpan.getSpanContext().getTraceId());
+        Span span = tracer.spanBuilder("http.post.rules.execute")
+                .setAttribute("http.method", "POST")
+                .setAttribute("http.route", "/api/rules/execute")
+                .startSpan();
 
-        RuleExecutionResponse response = executionService.executeRules(request);
-        return ResponseEntity.ok(response);
+        try (Scope scope = span.makeCurrent()) {
+            log.info("Received REST POST /api/rules/execute request [TraceID: {}]", span.getSpanContext().getTraceId());
+            RuleExecutionResponse response = executionService.executeRules(request);
+            response.setTraceId(span.getSpanContext().getTraceId());
+            response.setSpanId(span.getSpanContext().getSpanId());
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            span.recordException(e);
+            span.setAttribute("error", true);
+            throw e;
+        } finally {
+            span.end();
+        }
     }
 
     /**
@@ -53,10 +67,25 @@ public class DroolsController {
      */
     @PostMapping(value = "/evaluate-customer", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<RuleExecutionResponse> evaluateCustomer(@RequestBody CustomerFact customer) {
-        log.info("Received REST POST /api/rules/evaluate-customer for: {}", customer.getName());
-        RuleExecutionRequest request = new RuleExecutionRequest(customer);
-        RuleExecutionResponse response = executionService.executeRules(request);
-        return ResponseEntity.ok(response);
+        Span span = tracer.spanBuilder("http.post.rules.evaluate-customer")
+                .setAttribute("http.method", "POST")
+                .setAttribute("http.route", "/api/rules/evaluate-customer")
+                .startSpan();
+
+        try (Scope scope = span.makeCurrent()) {
+            log.info("Received REST POST /api/rules/evaluate-customer for: {}", customer.getName());
+            RuleExecutionRequest request = new RuleExecutionRequest(customer);
+            RuleExecutionResponse response = executionService.executeRules(request);
+            response.setTraceId(span.getSpanContext().getTraceId());
+            response.setSpanId(span.getSpanContext().getSpanId());
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            span.recordException(e);
+            span.setAttribute("error", true);
+            throw e;
+        } finally {
+            span.end();
+        }
     }
 
     /**
@@ -65,11 +94,26 @@ public class DroolsController {
      */
     @PostMapping(value = "/execute-json", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<RuleExecutionResponse> executeRawJson(@RequestBody Map<String, Object> jsonMap) {
-        log.info("Received REST POST /api/rules/execute-json payload: {}", jsonMap);
-        CustomerFact customer = objectMapper.convertValue(jsonMap, CustomerFact.class);
-        RuleExecutionRequest request = new RuleExecutionRequest(customer);
-        RuleExecutionResponse response = executionService.executeRules(request);
-        return ResponseEntity.ok(response);
+        Span span = tracer.spanBuilder("http.post.rules.execute-json")
+                .setAttribute("http.method", "POST")
+                .setAttribute("http.route", "/api/rules/execute-json")
+                .startSpan();
+
+        try (Scope scope = span.makeCurrent()) {
+            log.info("Received REST POST /api/rules/execute-json payload: {}", jsonMap);
+            CustomerFact customer = objectMapper.convertValue(jsonMap, CustomerFact.class);
+            RuleExecutionRequest request = new RuleExecutionRequest(customer);
+            RuleExecutionResponse response = executionService.executeRules(request);
+            response.setTraceId(span.getSpanContext().getTraceId());
+            response.setSpanId(span.getSpanContext().getSpanId());
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            span.recordException(e);
+            span.setAttribute("error", true);
+            throw e;
+        } finally {
+            span.end();
+        }
     }
 
     /**

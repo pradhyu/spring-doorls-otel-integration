@@ -3,6 +3,18 @@ package com.example.droolsotel.rules
 import com.example.droolsotel.model.CustomerFact;
 global com.example.droolsotel.service.CustomerDbService dbService;
 
+// Declared types for forward chaining and multiple firings
+declare LoyaltyPoint
+    points : int
+    processed : boolean
+end
+
+declare Coupon
+    code : String
+    discountVal : double
+    used : boolean
+end
+
 rule "Fetch Membership Tier from Database"
     salience 500
     when
@@ -16,53 +28,128 @@ rule "Fetch Membership Tier from Database"
         }
 end
 
+rule "Fetch Base Tier Discount from Database"
+    salience 450
+    when
+        $customer : CustomerFact( membershipTier != null && membershipTier != "", discountPercentage == 0.0, appliedRules not contains "Database Tier Discount" )
+    then
+        System.out.println("[Drools Rule Fired] Fetching base discount % for tier: " + $customer.getMembershipTier() + " from HSQLDB...");
+        double pct = dbService.getTierDiscountPercentage($customer.getMembershipTier());
+        modify($customer) {
+            addDiscount(pct),
+            addAppliedRule("Database Tier Discount")
+        }
+end
+
+rule "Generate Loyalty Points"
+    salience 400
+    when
+        $customer : CustomerFact( purchaseAmount >= 500.0 )
+        not LoyaltyPoint()
+    then
+        System.out.println("[Drools Rule Fired] Generating 2 LoyaltyPoint vouchers for high spender: " + $customer.getName());
+        insert(new LoyaltyPoint(100, false));
+        insert(new LoyaltyPoint(200, false));
+end
+
+rule "Process Loyalty Point"
+    salience 300
+    when
+        $lp : LoyaltyPoint( processed == false, $pts : points )
+        $customer : CustomerFact()
+    then
+        System.out.println("[Drools Rule Fired] Processing LoyaltyPoint voucher (" + $pts + " pts) for: " + $customer.getName());
+        modify($lp) {
+            setProcessed(true)
+        }
+        modify($customer) {
+            addDiscount(2.5),
+            addAppliedRule("Processed Loyalty Point Voucher (+" + $pts + " pts)")
+        }
+end
+
+rule "Generate Bonus Coupon for High Accumulated Discount"
+    salience 200
+    when
+        $customer : CustomerFact( discountPercentage >= 5.0 )
+        not Coupon( code == "LOYALTY_BONUS" )
+    then
+        System.out.println("[Drools Rule Fired] Generating High-Spender LOYALTY_BONUS coupon for: " + $customer.getName());
+        insert(new Coupon("LOYALTY_BONUS", 10.0, false));
+end
+
+rule "Generate Premium Spender Coupon"
+    salience 200
+    when
+        $customer : CustomerFact( purchaseAmount >= 600.0 )
+        not Coupon( code == "PREMIUM_SPENDER" )
+    then
+        System.out.println("[Drools Rule Fired] Generating PREMIUM_SPENDER coupon for: " + $customer.getName());
+        insert(new Coupon("PREMIUM_SPENDER", 15.0, false));
+end
+
+rule "Resolve Coupon Conflict - Disable Lower Value Coupon"
+    salience 180
+    when
+        $c1 : Coupon( used == false, $code1 : code, $val1 : discountVal )
+        $c2 : Coupon( used == false, code != $code1, $val2 : discountVal )
+        eval($val1 > $val2 || ($val1 == $val2 && $code1.compareTo($c2.getCode()) > 0))
+    then
+        System.out.println("[Drools Rule Fired] Coupon conflict detected! Disabling lower value coupon: " + $c2.getCode() + " in favor of: " + $code1);
+        modify($c2) {
+            setUsed(true)
+        }
+end
+
+rule "Apply Unused Coupon"
+    salience 100
+    when
+        $coupon : Coupon( used == false, $code : code, $val : discountVal )
+        $customer : CustomerFact()
+    then
+        System.out.println("[Drools Rule Fired] Applying Coupon: " + $code + " (+" + $val + "%) for: " + $customer.getName());
+        modify($coupon) {
+            setUsed(true)
+        }
+        modify($customer) {
+            addDiscount($val),
+            addAppliedRule("Applied Coupon: " + $code + " (+" + $val + "%)")
+        }
+end
+
 rule "Senior Customer Discount"
     salience 10
     when
-        $customer : CustomerFact( age >= 65 )
+        $customer : CustomerFact( age >= 65, appliedRules not contains "Senior Customer Discount (+10%)" )
     then
-        $customer.addDiscount(10.0);
-        $customer.addAppliedRule("Senior Customer Discount (+10%)");
+        modify($customer) {
+            addDiscount(10.0),
+            addAppliedRule("Senior Customer Discount (+10%)")
+        }
         System.out.println("[Drools Rule Fired] Senior Customer Discount applied for: " + $customer.getName());
 end
 
 rule "Youth Customer Discount"
     salience 10
     when
-        $customer : CustomerFact( age < 18 )
+        $customer : CustomerFact( age < 18, appliedRules not contains "Youth Customer Discount (+5%)" )
     then
-        $customer.addDiscount(5.0);
-        $customer.addAppliedRule("Youth Customer Discount (+5%)");
+        modify($customer) {
+            addDiscount(5.0),
+            addAppliedRule("Youth Customer Discount (+5%)")
+        }
         System.out.println("[Drools Rule Fired] Youth Customer Discount applied for: " + $customer.getName());
-end
-
-rule "Gold Membership Discount"
-    salience 20
-    when
-        $customer : CustomerFact( membershipTier != null && membershipTier.equalsIgnoreCase("GOLD") )
-    then
-        $customer.addDiscount(15.0);
-        $customer.addAppliedRule("Gold Membership Discount (+15%)");
-        System.out.println("[Drools Rule Fired] Gold Membership Discount applied for: " + $customer.getName());
-end
-
-rule "Platinum Membership Discount"
-    salience 25
-    when
-        $customer : CustomerFact( membershipTier != null && membershipTier.equalsIgnoreCase("PLATINUM") )
-    then
-        $customer.addDiscount(20.0);
-        $customer.addAppliedRule("Platinum Membership Discount (+20%)");
-        System.out.println("[Drools Rule Fired] Platinum Membership Discount applied for: " + $customer.getName());
 end
 
 rule "Large Purchase Bonus Discount"
     salience 5
     when
-        $customer : CustomerFact( purchaseAmount >= 500.0 )
+        $customer : CustomerFact( purchaseAmount >= 500.0, appliedRules not contains "Large Purchase Bonus Discount (+5%)" )
     then
-        $customer.addDiscount(5.0);
-        $customer.addAppliedRule("Large Purchase Bonus Discount (+5%)");
+        modify($customer) {
+            addDiscount(5.0),
+            addAppliedRule("Large Purchase Bonus Discount (+5%)")
+        }
         System.out.println("[Drools Rule Fired] Large Purchase Bonus Discount applied for: " + $customer.getName());
 end
 

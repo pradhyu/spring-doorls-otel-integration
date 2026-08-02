@@ -20,8 +20,9 @@ public class DroolsOtelAgendaEventListener implements AgendaEventListener {
 
     private final Tracer tracer;
     private final LongCounter rulesFiredCounter;
-    private final Map<String, Span> activeRuleSpans = new ConcurrentHashMap<>();
-    private final Map<String, Scope> activeScopes = new ConcurrentHashMap<>();
+    private final Map<org.kie.api.runtime.rule.Match, Span> activeRuleSpans = new ConcurrentHashMap<>();
+    private final Map<org.kie.api.runtime.rule.Match, Scope> activeScopes = new ConcurrentHashMap<>();
+    private final ThreadLocal<Span> activeEvalSpan = new ThreadLocal<>();
 
     public DroolsOtelAgendaEventListener(Tracer tracer, Meter meter) {
         this.tracer = tracer;
@@ -29,6 +30,21 @@ public class DroolsOtelAgendaEventListener implements AgendaEventListener {
                 .setDescription("Total number of Drools rules fired")
                 .setUnit("1")
                 .build();
+    }
+
+    public void startEvaluationSpan() {
+        Span span = tracer.spanBuilder("drools.engine.evaluate")
+                .setAttribute(AttributeKey.stringKey("drools.engine.phase"), "agenda_evaluation")
+                .startSpan();
+        activeEvalSpan.set(span);
+    }
+
+    public void endEvaluationSpan() {
+        Span span = activeEvalSpan.get();
+        if (span != null) {
+            span.end();
+            activeEvalSpan.remove();
+        }
     }
 
     @Override
@@ -43,8 +59,12 @@ public class DroolsOtelAgendaEventListener implements AgendaEventListener {
 
     @Override
     public void beforeMatchFired(BeforeMatchFiredEvent event) {
-        String ruleName = event.getMatch().getRule().getName();
-        String packageName = event.getMatch().getRule().getPackageName();
+        // End the active evaluation span when a rule starts executing
+        endEvaluationSpan();
+
+        org.kie.api.runtime.rule.Match match = event.getMatch();
+        String ruleName = match.getRule().getName();
+        String packageName = match.getRule().getPackageName();
 
         log.info("Executing Drools Rule: [Package: {}, Rule: {}]", packageName, ruleName);
 
@@ -54,20 +74,21 @@ public class DroolsOtelAgendaEventListener implements AgendaEventListener {
                 .startSpan();
 
         Scope scope = span.makeCurrent();
-        activeRuleSpans.put(ruleName, span);
-        activeScopes.put(ruleName, scope);
+        activeRuleSpans.put(match, span);
+        activeScopes.put(match, scope);
     }
 
     @Override
     public void afterMatchFired(AfterMatchFiredEvent event) {
-        String ruleName = event.getMatch().getRule().getName();
+        org.kie.api.runtime.rule.Match match = event.getMatch();
+        String ruleName = match.getRule().getName();
 
-        Scope scope = activeScopes.remove(ruleName);
+        Scope scope = activeScopes.remove(match);
         if (scope != null) {
             scope.close();
         }
 
-        Span span = activeRuleSpans.remove(ruleName);
+        Span span = activeRuleSpans.remove(match);
         if (span != null) {
             span.setAttribute(AttributeKey.booleanKey("drools.rule.fired"), true);
             span.end();
@@ -75,6 +96,9 @@ public class DroolsOtelAgendaEventListener implements AgendaEventListener {
 
         rulesFiredCounter.add(1, Attributes.of(AttributeKey.stringKey("rule_name"), ruleName));
         log.info("Completed Drools Rule: {}", ruleName);
+
+        // Start a new evaluation span for the next gap
+        startEvaluationSpan();
     }
 
     @Override

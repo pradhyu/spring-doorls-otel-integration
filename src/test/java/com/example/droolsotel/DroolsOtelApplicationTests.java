@@ -24,7 +24,7 @@ class DroolsOtelApplicationTests {
 
     @Test
     void testExecuteRulesSeniorGoldCustomer() {
-        CustomerFact customer = new CustomerFact("Alice Smith", 70, "GOLD", 1000.0);
+        CustomerFact customer = new CustomerFact("Alice Smith", 70, "GOLD", 300.0);
         RuleExecutionRequest request = new RuleExecutionRequest(customer);
 
         ResponseEntity<RuleExecutionResponse> responseEntity = restTemplate.postForEntity(
@@ -42,12 +42,12 @@ class DroolsOtelApplicationTests {
         CustomerFact updatedCustomer = response.getCustomer();
         assertThat(updatedCustomer.getAppliedRules()).contains(
                 "Senior Customer Discount (+10%)",
-                "Gold Membership Discount (+15%)",
-                "Large Purchase Bonus Discount (+5%)"
+                "Database Tier Discount",
+                "Applied Coupon: LOYALTY_BONUS (+10.0%)"
         );
-        // Total discount = 10% + 15% + 5% = 30% -> Final price = 1000 * (1 - 0.30) = 700.0
-        assertThat(updatedCustomer.getDiscountPercentage()).isEqualTo(30.0);
-        assertThat(updatedCustomer.getFinalAmount()).isEqualTo(700.0);
+        // Total discount = 10% (Senior) + 15% (Gold DB) + 10% (Coupon) = 35% -> Final price = 300 * (1 - 0.35) = 195.0
+        assertThat(updatedCustomer.getDiscountPercentage()).isEqualTo(35.0);
+        assertThat(updatedCustomer.getFinalAmount()).isEqualTo(195.0);
 
         assertThat(response.getTraceId()).isNotNull().isNotBlank();
         assertThat(response.getSpanId()).isNotNull().isNotBlank();
@@ -66,7 +66,7 @@ class DroolsOtelApplicationTests {
         assertThat(responseEntity.getStatusCode()).isEqualTo(HttpStatus.OK);
         RuleExecutionResponse response = responseEntity.getBody();
         assertThat(response).isNotNull();
-        assertThat(response.getCustomer().getDiscountPercentage()).isEqualTo(5.0);
-        assertThat(response.getCustomer().getFinalAmount()).isEqualTo(95.0);
+        assertThat(response.getCustomer().getDiscountPercentage()).isEqualTo(15.0);
+        assertThat(response.getCustomer().getFinalAmount()).isEqualTo(85.0);
     }
 }

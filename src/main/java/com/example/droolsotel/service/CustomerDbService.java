@@ -46,4 +46,34 @@ public class CustomerDbService {
             span.end();
         }
     }
+
+    public double getTierDiscountPercentage(String tier) {
+        if (tier == null || tier.isBlank()) {
+            return 0.0;
+        }
+
+        Span span = tracer.spanBuilder("db.getTierDiscountPercentage")
+                .setAttribute(AttributeKey.stringKey("db.system"), "hsqldb")
+                .setAttribute(AttributeKey.stringKey("db.statement"), "SELECT discount_percentage FROM tier_discount WHERE membership_tier = ?")
+                .setAttribute(AttributeKey.stringKey("db.membership_tier"), tier)
+                .startSpan();
+
+        try (Scope scope = span.makeCurrent()) {
+            span.addEvent("db_call_start");
+            Double discount = jdbcTemplate.queryForObject(
+                    "SELECT discount_percentage FROM tier_discount WHERE membership_tier = ?",
+                    Double.class,
+                    tier
+            );
+            double result = discount != null ? discount : 0.0;
+            span.setAttribute(AttributeKey.doubleKey("db.result.discount_percentage"), result);
+            return result;
+        } catch (Exception e) {
+            span.recordException(e);
+            span.setAttribute(AttributeKey.booleanKey("error"), true);
+            return 0.0;
+        } finally {
+            span.end();
+        }
+    }
 }

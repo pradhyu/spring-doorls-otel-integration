@@ -83,6 +83,21 @@ docker-compose up --build
 
 ---
 
+## 🚀 Quick Start with .NET Aspire Dashboard
+
+Alternatively, you can run the stack using the **.NET Aspire Dashboard** for telemetry visualization:
+
+```bash
+docker-compose -f docker-compose-aspire.yml up --build
+```
+
+### Access Ports & Services:
+- **Spring Boot Application REST API**: `http://localhost:8080`
+- **.NET Aspire Dashboard UI**: `http://localhost:18888`
+- **Spring Actuator Metrics**: `http://localhost:8080/actuator`
+
+---
+
 ## 💻 Local Development & Build
 
 ### Prerequisites
