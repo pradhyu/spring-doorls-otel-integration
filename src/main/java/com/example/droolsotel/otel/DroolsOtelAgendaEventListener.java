@@ -24,6 +24,8 @@ public class DroolsOtelAgendaEventListener implements AgendaEventListener {
     private static final Logger log = LoggerFactory.getLogger(DroolsOtelAgendaEventListener.class);
 
     private final Tracer tracer;
+    private final String requestId;
+    private final String transactionId;
     private final LongCounter rulesFiredCounter;
     private final LongCounter matchesCreatedCounter;
     private final LongCounter matchesCancelledCounter;
@@ -39,8 +41,10 @@ public class DroolsOtelAgendaEventListener implements AgendaEventListener {
         return stack;
     });
 
-    public DroolsOtelAgendaEventListener(Tracer tracer, Meter meter) {
+    public DroolsOtelAgendaEventListener(Tracer tracer, Meter meter, String requestId, String transactionId) {
         this.tracer = tracer;
+        this.requestId = requestId;
+        this.transactionId = transactionId;
         this.rulesFiredCounter = meter.counterBuilder("drools_rules_fired_total")
                 .setDescription("Total number of Drools rules fired")
                 .setUnit("1")
@@ -58,6 +62,8 @@ public class DroolsOtelAgendaEventListener implements AgendaEventListener {
     public void startEvaluationSpan() {
         Span span = tracer.spanBuilder("drools.engine.evaluate")
                 .setAttribute(AttributeKey.stringKey("drools.engine.phase"), "agenda_evaluation")
+                .setAttribute(AttributeKey.stringKey("app.request_id"), requestId)
+                .setAttribute(AttributeKey.stringKey("app.transaction_id"), transactionId)
                 .startSpan();
         activeEvalSpan.set(span);
     }
@@ -107,6 +113,8 @@ public class DroolsOtelAgendaEventListener implements AgendaEventListener {
                 .setAttribute(AttributeKey.stringKey("drools.package.name"), packageName)
                 .setAttribute(AttributeKey.stringKey("drools.agenda_group"), currentGroup)
                 .setAttribute(AttributeKey.stringArrayKey("drools.matched_facts"), matchedFactTypes)
+                .setAttribute(AttributeKey.stringKey("app.request_id"), requestId)
+                .setAttribute(AttributeKey.stringKey("app.transaction_id"), transactionId)
                 .startSpan();
 
         // Add telemetry-safe summary of each matching fact as a span event

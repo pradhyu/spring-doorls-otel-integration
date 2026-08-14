@@ -48,10 +48,20 @@ public class DroolsExecutionService {
     }
 
     public RuleExecutionResponse executeRules(RuleExecutionRequest request) {
-        Span span = tracer.spanBuilder("drools.execution.process")
+        String requestId = request.getRequestId();
+        if (requestId == null || requestId.isEmpty()) {
+            requestId = "req-dummy-" + java.util.UUID.randomUUID().toString().substring(0, 8);
+        }
+        String transactionId = request.getTransactionId();
+
+        io.opentelemetry.api.trace.SpanBuilder mainBuilder = tracer.spanBuilder("drools.execution.process")
                 .setAttribute(AttributeKey.stringKey("drools.execution.type"), 
                         request.getCustomDrl() != null ? "CUSTOM_DRL" : "DEFAULT_RULES")
-                .startSpan();
+                .setAttribute(AttributeKey.stringKey("app.request_id"), requestId);
+        if (transactionId != null) {
+            mainBuilder.setAttribute(AttributeKey.stringKey("app.transaction_id"), transactionId);
+        }
+        Span span = mainBuilder.startSpan();
 
         long startTime = System.currentTimeMillis();
         CustomerFact customer = request.getCustomer();
@@ -75,40 +85,83 @@ public class DroolsExecutionService {
 
             KieSession kieSession = activeContainer.newKieSession(sessionConfig);
 
-            // Set Database Service as a Global Variable
-            kieSession.setGlobal("dbService", dbService);
+            // Set Database Service as a Global Variable Safely
+            try {
+                kieSession.setGlobal("dbService", dbService);
+            } catch (RuntimeException e) {
+                log.debug("Global 'dbService' not declared in DRL: {}", e.getMessage());
+            }
+
+            // Set SLF4J Logger as a Global Variable Safely
+            try {
+                kieSession.setGlobal("logger", org.slf4j.LoggerFactory.getLogger("com.example.droolsotel.rules"));
+            } catch (RuntimeException e) {
+                log.debug("Global 'logger' not declared in DRL: {}", e.getMessage());
+            }
 
             // Register OpenTelemetry Event Listeners
-            DroolsOtelAgendaEventListener agendaListener = new DroolsOtelAgendaEventListener(tracer, meter);
+            DroolsOtelAgendaEventListener agendaListener = new DroolsOtelAgendaEventListener(tracer, meter, requestId, transactionId);
             kieSession.addEventListener(agendaListener);
             kieSession.addEventListener(new DroolsOtelRuleRuntimeEventListener(meter));
 
             try {
-                Span fireRulesSpan = tracer.spanBuilder("drools.fireAllRules").startSpan();
+                io.opentelemetry.api.trace.SpanBuilder fireBuilder = tracer.spanBuilder("drools.fireAllRules")
+                        .setAttribute(AttributeKey.stringKey("app.request_id"), requestId);
+                if (transactionId != null) {
+                    fireBuilder.setAttribute(AttributeKey.stringKey("app.transaction_id"), transactionId);
+                }
+                Span fireRulesSpan = fireBuilder.startSpan();
+
                 int firedCount;
                 try (Scope fireScope = fireRulesSpan.makeCurrent()) {
                     agendaListener.startEvaluationSpan();
                     
-                    Span insertSpan = tracer.spanBuilder("drools.session.insert").startSpan();
+                    io.opentelemetry.api.trace.SpanBuilder insertBuilder = tracer.spanBuilder("drools.session.insert")
+                            .setAttribute(AttributeKey.stringKey("app.request_id"), requestId);
+                    if (transactionId != null) {
+                        insertBuilder.setAttribute(AttributeKey.stringKey("app.transaction_id"), transactionId);
+                    }
+                    Span insertSpan = insertBuilder.startSpan();
+
                     try (Scope insertScope = insertSpan.makeCurrent()) {
                         kieSession.insert(customer);
                     } finally {
                         insertSpan.end();
                     }
                     
-                    Span fireInternalSpan = tracer.spanBuilder("drools.session.fireAllRulesInternal").startSpan();
+                    io.opentelemetry.api.trace.SpanBuilder internalBuilder = tracer.spanBuilder("drools.session.fireAllRulesInternal")
+                            .setAttribute(AttributeKey.stringKey("app.request_id"), requestId);
+                    if (transactionId != null) {
+                        internalBuilder.setAttribute(AttributeKey.stringKey("app.transaction_id"), transactionId);
+                    }
+                    Span fireInternalSpan = internalBuilder.startSpan();
+
                     firedCount = 0;
                     try (Scope fireInternalScope = fireInternalSpan.makeCurrent()) {
-                        String[] phases = {"prepare", "business-rules", "customization", "post-processing"};
+                        String[] phases = (request.getCustomDrl() != null && !request.getCustomDrl().isBlank())
+                                ? new String[]{"MAIN"}
+                                : new String[]{"prepare", "business-rules", "customization", "post-processing"};
+
                         for (String phase : phases) {
-                            Span phaseSpan = tracer.spanBuilder("drools.phase." + phase)
-                                    .setAttribute("drools.engine.phase", phase)
-                                    .startSpan();
+                            io.opentelemetry.api.trace.SpanBuilder phaseBuilder = tracer.spanBuilder("drools.phase." + phase)
+                                    .setAttribute(AttributeKey.stringKey("drools.engine.phase"), phase)
+                                    .setAttribute(AttributeKey.stringKey("app.request_id"), requestId);
+                            if (transactionId != null) {
+                                phaseBuilder.setAttribute(AttributeKey.stringKey("app.transaction_id"), transactionId);
+                            }
+                            Span phaseSpan = phaseBuilder.startSpan();
+
                             try (Scope phaseScope = phaseSpan.makeCurrent()) {
                                 log.info("Activating Drools agenda group: {}", phase);
-                                kieSession.getAgenda().getAgendaGroup(phase).setFocus();
-                                int fired = kieSession.fireAllRules();
-                                phaseSpan.setAttribute("drools.rules_fired", (long) fired);
+                                org.kie.api.runtime.rule.AgendaGroup agendaGroup = kieSession.getAgenda().getAgendaGroup(phase);
+                                int fired = 0;
+                                if (agendaGroup != null) {
+                                    if (!phase.equalsIgnoreCase("MAIN")) {
+                                        agendaGroup.setFocus();
+                                    }
+                                    fired = kieSession.fireAllRules();
+                                }
+                                phaseSpan.setAttribute(AttributeKey.longKey("drools.rules_fired"), (long) fired);
                                 firedCount += fired;
                             } finally {
                                 phaseSpan.end();

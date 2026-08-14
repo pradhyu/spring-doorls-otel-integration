@@ -1,6 +1,6 @@
 # Architecture & Design: OpenTelemetry + Jaeger Integration
 
-This document explains the architectural decisions behind the multi-service container orchestration setup in [`docker-compose.yml`](file:///home/pkshrestha/git/otel-spring/docker-compose.yml), focusing on trace context propagation and custom nested span lifecycles across microservice boundaries.
+This document explains the architectural decisions behind the multi-service container orchestration setup in [`docker-compose.yml`](file:///home/pkshrestha/git/otel-spring/docker-compose.yml), focusing on trace context propagation, custom nested span lifecycles, and Drools rule-flow phase tracing.
 
 ---
 
@@ -9,89 +9,96 @@ This document explains the architectural decisions behind the multi-service cont
 To help visualize how data flows and how ports are exposed, here are diagrams showing both the physical container topology and the logical lifecycle of a single request trace across the microservices.
 
 ### 1. Physical Service & Port Topology
-This diagram shows how containers communicate on the internal bridge network (`otel-net`) versus what is exposed to the local host machine.
+This diagram shows how containers communicate on the internal bridge network (`otel-net`) versus what is exposed to the local host machine, incorporating Prometheus and Grafana.
 
 ```mermaid
-graph LR
-    subgraph Host ["Host System (Localhost)"]
-        Client[Client / curl]
-        Browser[Web Browser]
+graph TD
+    subgraph Host
+        Client[Client]
+        Browser[Browser]
     end
 
-    subgraph DockerNet ["Docker Network (otel-net)"]
+    subgraph DockerNet
         direction TB
-        Proxy["proxy-service<br/>(Port: 8081)"]
-        App["drools-otel-app<br/>(Port: 8080)"]
-        Collector["otel-collector<br/>(Ports: 4317, 4318)"]
-        Jaeger["jaeger (All-in-One)<br/>(Ports: 16686, 14250, 4317/4318 internal)"]
+        Proxy[Proxy Service]
+        App[Drools App]
+        Collector[OTel Collector]
+        Jaeger[Jaeger]
+        Prometheus[Prometheus]
+        Grafana[Grafana]
     end
 
-    Client -->|HTTP POST /api/proxy/execute<br/>Port 8081:8081| Proxy
-    Proxy -->|HTTP POST /api/rules/execute<br/>Port 8080| App
-    Browser -->|Access UI<br/>Port 16686:16686| Jaeger
+    Client -->|HTTP Request| Proxy
+    Proxy -->|HTTP Request| App
+    Browser -->|Access UI| Grafana
+    Browser -->|Access UI| Jaeger
+
+    Proxy -->|Export Traces| Collector
+    App -->|Export Traces| Collector
     
-    Proxy -->|Export Telemetry (OTLP gRPC)<br/>Port 4317:4317| Collector
-    App -->|Export Telemetry (OTLP gRPC)<br/>Port 4317:4317| Collector
-    Collector -->|Forward Traces (OTLP gRPC)<br/>Port 4317:4317| Jaeger
-```
+    Collector -->|Forward Traces| Jaeger
+    Collector -->|Expose Metrics| Prometheus
+    
+    Prometheus -->|Scrape Metrics| App
+    Prometheus -->|Scrape Metrics| Collector
+    
+    Grafana -->|Query Metrics| Prometheus
 
 #### 🖥️ Terminal Unicode Render
 ```text
-
- ┌─────────────────────────┐                                        ┌──────────────────────────────────┐
- │ Host System (Localhost) │                                        │ Docker Network (otel-net)        │
- │                         │                                        │                                  │
- │                         │                                        │                                  │
- │ ┌─────────────────┐     │                                        │ ┌──────────────────────────────┐ │
- │ │                 │     │                                        │ │                              │ │
- │ │                 │     │                                        │ │                              │ │
- │ │  Client / curl  │HTTP POST /api/proxy/execute<br/>Port 8081:8081 │   proxy-service<br/>(Port:   │ │
- │ │                 ├─────┼────────────────────────────────────────┼►│            8081)             │ │
- │ │                 │     │                                        │ │                              │ │
- │ │                 │     │                                        │ │                              │ │
- │ └─────────────────┘     │                                        │ └───────────────┬──────────────┘ │
- │                         │                HTTP POST /api/rules/execute<br/>Port 8080▼────────────────┤
- │ ┌─────────────────┐     │                                        │ ┌──────────────────────────────┐ │
- │ │                 │     │                                        │ │                              │ │
- │ │                 │     │                                        │ │                              │ │
- │ │   Web Browser   │     │                                        │ │  drools-otel-app<br/>(Port:  │ │
- │ │                 ├─────┼──────────────────╮                     │ │            8080)             │ │
- │ │                 │     │                  │                     │ │                              │ │
- │ │                 │     │                  │                     │ │                              │ │
- │ └─────────────────┘     │                  │                     │ └────────────────┬─────────────┘ │
- │                         │                  │                     │                  │               │
- └─────────────────────────┘                  │                     │                  │               │
-                                              │                     │                  │               │
-                                              │                     │                  │               │
-                                              │                     │                ╭─┼───────────────┤
-                                        Export│Telemetry (OTLP gRPC)<br/>Port 4317:4317│               │
-                                      Export Telemetry (OTLP gRPC)<br/>Port 4317:4317│ │               │
-                                              │                     │                ▼ ▼               │
-                                              │Access UI<br/>Port 1668┌──────────────────────────────┐ │
-                                              │                     │ │                              │ │
-                                              │                     │ │                              │ │
-                                              │                     │ │  otel-collector<br/>(Ports:  │ │
-                                              │                     │ │         4317, 4318)          │ │
-                                              │                     │ │                              │ │
-                                              │                     │ │                              │ │
-                                              │                     │ └───────────────┬──────────────┘ │
-                                         Forward Traces (OTLP gRPC)<br/>Port 4317:4317▼                │
-                                              │                     │ ┌──────────────────────────────┐ │
-                                              │                     │ │                              │ │
-                                              │                     │ │            jaeger            │ │
-                                              │                     │ │   (All-in-One)<br/>(Ports:   │ │
-                                              ╰─────────────────────┼►│        16686, 14250,         │ │
-                                                                    │ │     4317/4318 internal)      │ │
-                                                                    │ │                              │ │
-                                                                    │ └──────────────────────────────┘ │
-                                                                    │                                  │
-                                                                    └──────────────────────────────────┘
+ ┌─────────────────────────┐
+ │ Host System (Localhost) │
+ │                         │
+ │ ┌─────────────────┐     │
+ │ │  Client / curl  ├─────┼──────────────────────┐
+ │ └─────────────────┘     │                      │
+ │                         │                      │
+ │ ┌─────────────────┐     │                      │
+ │ │                 ├─────┼──────────┐           │
+ │ │   Web Browser   │     │          │           │
+ │ │                 ├─────┼─────┐    │           │
+ │ └─────────────────┘     │     │    │           │
+ └─────────────────────────┘     │    │           │
+                                 │    │           │
+ ┌───────────────────────────────┼────┼───────────┼────────────────────────────────────────┐
+ │ Docker Network (otel-net)     │    │           │                                        │
+ │                               ▼    │           ▼                                        │
+ │ ┌──────────────────────────────┐   │   ┌──────────────────────────────┐                 │
+ │ │        proxy-service         │   │   │        drools-otel-app       │◄──────────────┐ │
+ │ │         (Port 8081)          ├───┼──►│          (Port 8080)         │               │ │
+ │ └──────────────┬───────────────┘   │   └──────────────┬───────────────┘               │ │
+ │                │                   │                  │                               │ │
+ │                │Export Traces      │                  │Export Traces                  │ │
+ │                ▼                   │                  ▼                               │ │
+ │ ┌──────────────────────────────┐   │   ┌──────────────────────────────┐               │ │
+ │ │        otel-collector        │   │   │          prometheus          ├───────────────┘ │
+ │ │    (Ports 4317/4318/8889)    │   │   │         (Port 9090)          │                 │
+ │ └────────┬──────────────┬──────┘   │   └──────────────▲───────────────┘                 │
+ │          │              │          │                  │                               │
+ │          │Forward       │Expose    │                  │Scrape Metrics                 │
+ │          │Traces        │Metrics   │                  │                               │
+ │          ▼              ▼          │                  │                               │
+ │ ┌──────────────────────────────┐   │                  │                               │
+ │ │            jaeger            │◄──┼──────────────────┘                               │
+ │ │         (Port 16686)         │   │                                                  │
+ │ └──────────────▲───────────────┘   │                                                  │
+ │                │                   │                                                  │
+ │                │Query Traces       │                                                  │
+ │                │                   │                                                  │
+ │ ┌──────────────┴───────────────┐   │                                                  │
+ │ │           grafana            │◄──┘                                                  │
+ │ │         (Port 3000)          │                                                      │
+ │ └──────────────────────────────┘                                                      │
+ └───────────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+
+
 
 
 
 ### 2. Logical Telemetry Request Flow (Context Propagation & Child Spans)
-This diagram details the sequence of execution inside both containers, demonstrating how the trace context is passed via `traceparent` headers to link the spans into a single trace graph, including the local child spans in the proxy service.
+This diagram details the sequence of execution inside both containers, demonstrating how the trace context is passed via `traceparent` headers to link the spans into a single trace graph, including the local child spans in the proxy service and sequential Drools rule evaluation phases.
 
 ```mermaid
 sequenceDiagram
@@ -121,7 +128,7 @@ sequenceDiagram
     Svc->>Drools: fireAllRules()
     Note over Drools: Start Span: "drools.fireAllRules"
     
-    loop Rule Evaluation
+    loop Rule Evaluation Sequence
         Drools->>Listener: rule matches agenda
         Note over Listener: Start Span: "drools.engine.evaluate"
         Drools->>Drools: execute rule consequence
@@ -201,7 +208,7 @@ sequenceDiagram
      ┆                                                   ┆                                                         ┆                        ┆           └───────────────────────────────────┘         ┆                        ┆                                   ┆
      ┆                                                   ┆                                                         ┆                        ┆                             ┆                           ┆                        ┆                                   ┆
 ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│[loop] Rule Evaluation                                                                                                                                                                                                                                                  │
+│[loop] Rule Evaluation Sequence                                                                                                                                                                                                                                         │
 │    ┆                                                   ┆                                                         ┆                        ┆                             ┆ 5: rule matches agenda    ┆                        ┆                                   ┆     │
 │    ┆                                                   ┆                                                         ┆                        ┆                             ────────────────────────────►                        ┆                                   ┆     │
 │    ┆                                                   ┆                                                         ┆                        ┆                             ┆                           ┆                        ┆                                   ┆     │
@@ -279,11 +286,72 @@ sequenceDiagram
 
 ---
 
+## 🎛️ Drools Rule-Flow Phases & Agenda Groups
+
+To manage complexity and execution order, the business rules are split into four logical phases (agenda groups) evaluated sequentially inside [`discount.drl`](file:///home/pkshrestha/git/otel-spring/src/main/resources/com/example/droolsotel/rules/discount.drl):
+
+1. **`prepare`**: Fetches initial customer information (like membership tier and base discounts) from the HSQL database.
+2. **`business-rules`**: Evaluates core discounts (age-based, volume-based, and loyalty point generation).
+3. **`customization`**: Calculates special coupons, and handles coupon deduplication and conflict resolution.
+4. **`post-processing`**: Applies selected coupons and computes final amounts.
+
+Each phase is explicitly run as a nested span under `drools.session.fireAllRulesInternal` in [`DroolsExecutionService.java`](file:///home/pkshrestha/git/otel-spring/src/main/java/com/example/droolsotel/service/DroolsExecutionService.java):
+```java
+String[] phases = {"prepare", "business-rules", "customization", "post-processing"};
+for (String phase : phases) {
+    Span phaseSpan = tracer.spanBuilder("drools.phase." + phase)
+            .setAttribute("drools.engine.phase", phase)
+            .startSpan();
+    try (Scope phaseScope = phaseSpan.makeCurrent()) {
+        kieSession.getAgenda().getAgendaGroup(phase).setFocus();
+        int fired = kieSession.fireAllRules();
+        phaseSpan.setAttribute("drools.rules_fired", (long) fired);
+        firedCount += fired;
+    } finally {
+        phaseSpan.end();
+    }
+}
+```
+
+This generates a clear parent-child structure in Jaeger traces:
+```text
+  drools.session.fireAllRulesInternal
+    ├── drools.phase.prepare
+    │     ├── drools.rule.Dummy Prepare Rule
+    │     └── drools.rule.Fetch Base Discount from Database
+    ├── drools.phase.business-rules
+    │     ├── drools.rule.Dummy Business Rule
+    │     └── [Core discount rules...]
+    ├── drools.phase.customization
+    │     ├── drools.rule.Dummy Customization Rule
+    │     └── [Coupon rules...]
+    └── drools.phase.post-processing
+          ├── drools.rule.Dummy Post-Processing Rule
+          └── drools.rule.Apply Unused Coupon
+```
+
+---
+
 ## ❓ Why Use both an OTEL Collector and Jaeger?
 
 You might wonder: *Since `jaegertracing/all-in-one` has its own OTLP receiver (via `COLLECTOR_OTLP_ENABLED=true`), why do we need the standalone `otel-collector` container in the middle?*
 
-Here is why this multi-stage architecture is used:
+While Jaeger can receive raw OTLP traces directly on ports `4317`/`4318`, it lacks the architectural capabilities of a dedicated telemetry gateway. Here is a feature comparison showing what the OpenTelemetry Collector provides that is missing in Jaeger All-in-One:
+
+### OTel Collector vs. Jaeger All-in-One Feature Comparison
+
+| Feature Category | OpenTelemetry Collector | Jaeger All-in-One |
+| :--- | :--- | :--- |
+| **Supported Telemetry Types** | **Traces, Metrics, and Logs** (all supported via structured pipelines). | **Traces only** (metrics and logs sent here are discarded). |
+| **Data Processing & Transformation** | **Yes.** Can filter, rewrite, redact, and add metadata in transit. | **No.** Stores and displays trace data exactly as received. |
+| **Tail-Based Sampling** | **Yes.** Can buffer complete traces in memory to sample based on final outcomes (e.g., keep errors, drop 99% of normal traces). | **No.** Supports only head-based sampling (random/probabilistic decisions made before a trace is finished). |
+| **Data Redaction & Sanitization** | **Yes.** Can search and strip sensitive PII (passwords, social security numbers) before exporting. | **No.** Telemetry tags are stored without filters. |
+| **Multi-Destination Routing** | **Yes.** Can duplicate and route telemetry to multiple backends at once (e.g., Jaeger + Datadog + Elasticsearch). | **No.** Can only write to its own configured trace store. |
+| **System Stability (Memory Limiting)** | **Yes.** The `memory_limiter` processor drops telemetry or applies backpressure during load spikes to prevent crashes. | **No.** High traffic volumes can easily cause memory issues and crash the Jaeger container. |
+
+---
+
+### Core Architectural Reasons for the OTel Collector:
 
 ### 1. Decoupling & Vendor Neutrality (Production Best Practice)
 The application code does not know about Jaeger. It is configured to export telemetry using the standard OpenTelemetry Protocol (OTLP) to a local endpoint (`http://otel-collector:4317`). 
@@ -291,7 +359,7 @@ The application code does not know about Jaeger. It is configured to export tele
 
 ### 2. Multi-Destination Routing (Multiplexing)
 Jaeger is a tracing-only tool. However, an application generates three pillars of observability: Traces, Metrics, and Logs.
-* **Standalone Jaeger** cannot receive or store metrics and logs.
+* **Standalone Jaeger** cannot store or display metrics and logs. If applications send OTLP logs or metrics directly to Jaeger's OTLP port, they are discarded.
 * **The OTEL Collector** acts as a traffic controller:
   * **Traces** are sent to Jaeger and written to the debug console.
   * **Metrics** and **Logs** can be piped to Prometheus, Elasticsearch, Loki, or standard output.
@@ -300,7 +368,18 @@ Jaeger is a tracing-only tool. However, an application generates three pillars o
 The OTEL Collector offers high-performance processing components (like those configured in [`otel-collector-config.yaml`](file:///home/pkshrestha/git/otel-spring/otel-collector-config.yaml)):
 * **`memory_limiter`**: Drop telemetry if the collector is running out of memory, protecting the system from crashing under load spikes.
 * **`batch`**: Batches traces before exporting them. This drastically reduces network overhead and connection churn compared to sending every span individually from the app.
-* **Sampling**: Can be configured to filter out noise (e.g., discard successful health checks and only keep failed ones).
+* **Filter / Redact**: Drop noise (e.g., discard successful health checks `/actuator/health`) or strip sensitive parameters before they leave your network.
+
+### 4. Logging vs. Tracing: Span Events vs. Application Logs
+It is critical to distinguish how rule logs and trace events are propagated and visualized:
+
+| Telemetry Type | API/Logging Mechanism | Collector Pipeline | Visible in Jaeger UI Span? |
+| :--- | :--- | :--- | :--- |
+| **Span Events** | `span.addEvent(...)` | `traces` | **Yes** (rendered inside the span timeline under the "Logs" section) |
+| **Application Logs** | SLF4J / DRL `logger.info(...)` | `logs` | **No** (only printed to collector console output in current setup) |
+
+* **Span Events**: Injected directly on active spans inside listeners like [`DroolsOtelRuleRuntimeEventListener`](file:///home/pkshrestha/git/otel-spring/src/main/java/com/example/droolsotel/otel/DroolsOtelRuleRuntimeEventListener.java). Since they are part of the span data structure, they flow through the traces pipeline straight into Jaeger.
+* **Application Logs**: Captured by the OpenTelemetry Logback Appender in [`logback-spring.xml`](file:///home/pkshrestha/git/otel-spring/src/main/resources/logback-spring.xml) and sent via the OTel Logs API to the Collector. They are printed to the Collector's debug logs but not routed to Jaeger since standard Jaeger is a tracing-only backend.
 
 ---
 
@@ -340,9 +419,17 @@ Let's look at how the containers interact inside the compose file:
   * `OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317`
 
 ### 3. The OpenTelemetry Collector (`otel-collector`)
-* **Ports**: Exposes `4317` (gRPC) and `4318` (HTTP) to the internal network.
-* **Flow**: Collects telemetry from both `proxy` and `app`, batches it, and forwards traces to `jaeger:4317`.
+* **Ports**: Exposes `4317` (gRPC), `4318` (HTTP), `8888` (internal metrics), and `8889` (Prometheus metrics exporter) to the network.
+* **Flow**: Collects OTLP traces, logs, and metrics from `proxy` and `app`. It generates RED metrics from traces using the `spanmetrics` connector and exports them over Prometheus on port `8889`.
 
 ### 4. Jaeger (`jaeger`)
 * **Ports**: Exposes `16686` for the Web UI.
-* **Flow**: Stores traces and renders the flame graph showing `proxy-service` calls parented to `drools-otel-app` calls.
+* **Flow**: Receives traces from the OTel Collector and allows distributed tracing visualization.
+
+### 5. Prometheus (`prometheus`)
+* **Ports**: Exposes `9090` for its UI and query API.
+* **Flow**: Periodically scrapes metrics from the Spring Boot actuator (`drools-otel-app:8080/actuator/prometheus`) and OTel trace metrics exposed by the collector (`otel-collector:8889/metrics`).
+
+### 6. Grafana (`grafana`)
+* **Ports**: Exposes `3000` for the Web UI.
+* **Flow**: Serves as the central dashboard, automatically provisioned to read metrics from Prometheus and traces from Jaeger. Allows cross-referencing metrics with trace IDs.

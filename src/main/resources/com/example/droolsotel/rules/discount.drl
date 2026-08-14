@@ -2,6 +2,7 @@ package com.example.droolsotel.rules
 
 import com.example.droolsotel.model.CustomerFact;
 global com.example.droolsotel.service.CustomerDbService dbService;
+global org.slf4j.Logger logger;
 
 // Declared types for forward chaining and multiple firings
 declare LoyaltyPoint
@@ -25,7 +26,7 @@ rule "Dummy Prepare Rule"
     when
         $customer : CustomerFact()
     then
-        System.out.println("[Prepare Phase] Starting rules preparation for: " + $customer.getName());
+        logger.info("[Prepare Phase] Starting rules preparation for: {}", $customer.getName());
         $customer.addAppliedRule("[Phase: Prepare] Rule engine processing initialized");
 end
 
@@ -35,7 +36,7 @@ rule "Fetch Membership Tier from Database"
     when
         $customer : CustomerFact( memberId != null, membershipTier == null || membershipTier == "" )
     then
-        System.out.println("[Prepare Phase] Fetching membership tier for member: " + $customer.getMemberId() + " from HSQLDB...");
+        logger.info("[Prepare Phase] Fetching membership tier for member: {} from HSQLDB...", $customer.getMemberId());
         String tier = dbService.getMembershipTier($customer.getMemberId());
         modify($customer) {
             setMembershipTier(tier),
@@ -49,7 +50,7 @@ rule "Fetch Base Tier Discount from Database"
     when
         $customer : CustomerFact( membershipTier != null && membershipTier != "", discountPercentage == 0.0, appliedRules not contains "Database Tier Discount" )
     then
-        System.out.println("[Prepare Phase] Fetching base discount % for tier: " + $customer.getMembershipTier() + " from HSQLDB...");
+        logger.info("[Prepare Phase] Fetching base discount % for tier: {} from HSQLDB...", $customer.getMembershipTier());
         double pct = dbService.getTierDiscountPercentage($customer.getMembershipTier());
         modify($customer) {
             addDiscount(pct),
@@ -67,7 +68,7 @@ rule "Dummy Business Rule"
     when
         $customer : CustomerFact()
     then
-        System.out.println("[Business Rules Phase] Applying core business logic for: " + $customer.getName());
+        logger.info("[Business Rules Phase] Applying core business logic for: {}", $customer.getName());
         $customer.addAppliedRule("[Phase: Business-Rules] Core discount rules evaluating");
 end
 
@@ -78,7 +79,7 @@ rule "Generate Loyalty Points"
         $customer : CustomerFact( purchaseAmount >= 500.0 )
         not LoyaltyPoint()
     then
-        System.out.println("[Business Rules Phase] Generating 2 LoyaltyPoint vouchers for high spender: " + $customer.getName());
+        logger.info("[Business Rules Phase] Generating 2 LoyaltyPoint vouchers for high spender: {}", $customer.getName());
         insert(new LoyaltyPoint(100, false));
         insert(new LoyaltyPoint(200, false));
 end
@@ -90,7 +91,7 @@ rule "Process Loyalty Point"
         $lp : LoyaltyPoint( processed == false, $pts : points )
         $customer : CustomerFact()
     then
-        System.out.println("[Business Rules Phase] Processing LoyaltyPoint voucher (" + $pts + " pts) for: " + $customer.getName());
+        logger.info("[Business Rules Phase] Processing LoyaltyPoint voucher ({} pts) for: {}", $pts, $customer.getName());
         modify($lp) {
             setProcessed(true)
         }
@@ -106,7 +107,7 @@ rule "Evaluate VIP Status"
     when
         $customer : CustomerFact( purchaseAmount >= 1000.0, membershipTier != "PLATINUM" )
     then
-        System.out.println("[Business Rules Phase] Upgrade " + $customer.getName() + " to PLATINUM tier due to large purchaseAmount");
+        logger.info("[Business Rules Phase] Upgrade {} to PLATINUM tier due to large purchaseAmount", $customer.getName());
         modify($customer) {
             setMembershipTier("PLATINUM"),
             addAppliedRule("Upgrade to PLATINUM tier (Auto-VIP)")
@@ -119,7 +120,7 @@ rule "Evaluate High-Spender Age Reward"
     when
         $customer : CustomerFact( age >= 60, purchaseAmount >= 500.0, membershipTier == "REGULAR" )
     then
-        System.out.println("[Business Rules Phase] Upgrade " + $customer.getName() + " to GOLD tier due to age and spending");
+        logger.info("[Business Rules Phase] Upgrade {} to GOLD tier due to age and spending", $customer.getName());
         modify($customer) {
             setMembershipTier("GOLD"),
             addAppliedRule("Upgrade to GOLD tier (Senior Reward)")
@@ -136,7 +137,7 @@ rule "Senior Customer Discount"
             addDiscount(10.0),
             addAppliedRule("Senior Customer Discount (+10%)")
         }
-        System.out.println("[Business Rules Phase] Senior Customer Discount applied for: " + $customer.getName());
+        logger.info("[Business Rules Phase] Senior Customer Discount applied for: {}", $customer.getName());
 end
 
 rule "Youth Customer Discount"
@@ -149,7 +150,7 @@ rule "Youth Customer Discount"
             addDiscount(5.0),
             addAppliedRule("Youth Customer Discount (+5%)")
         }
-        System.out.println("[Business Rules Phase] Youth Customer Discount applied for: " + $customer.getName());
+        logger.info("[Business Rules Phase] Youth Customer Discount applied for: {}", $customer.getName());
 end
 
 rule "Large Purchase Bonus Discount"
@@ -162,7 +163,7 @@ rule "Large Purchase Bonus Discount"
             addDiscount(5.0),
             addAppliedRule("Large Purchase Bonus Discount (+5%)")
         }
-        System.out.println("[Business Rules Phase] Large Purchase Bonus Discount applied for: " + $customer.getName());
+        logger.info("[Business Rules Phase] Large Purchase Bonus Discount applied for: {}", $customer.getName());
 end
 
 // ==========================================
@@ -175,7 +176,7 @@ rule "Dummy Customization Rule"
     when
         $customer : CustomerFact()
     then
-        System.out.println("[Customization Phase] Running dynamic customizations for: " + $customer.getName());
+        logger.info("[Customization Phase] Running dynamic customizations for: {}", $customer.getName());
         $customer.addAppliedRule("[Phase: Customization] Tailoring specific offers");
 end
 
@@ -186,7 +187,7 @@ rule "Generate Bonus Coupon for High Accumulated Discount"
         $customer : CustomerFact( discountPercentage >= 5.0 )
         not Coupon( code == "LOYALTY_BONUS" )
     then
-        System.out.println("[Customization Phase] Generating High-Spender LOYALTY_BONUS coupon for: " + $customer.getName());
+        logger.info("[Customization Phase] Generating High-Spender LOYALTY_BONUS coupon for: {}", $customer.getName());
         insert(new Coupon("LOYALTY_BONUS", 10.0, false));
 end
 
@@ -197,7 +198,7 @@ rule "Generate Premium Spender Coupon"
         $customer : CustomerFact( purchaseAmount >= 600.0 )
         not Coupon( code == "PREMIUM_SPENDER" )
     then
-        System.out.println("[Customization Phase] Generating PREMIUM_SPENDER coupon for: " + $customer.getName());
+        logger.info("[Customization Phase] Generating PREMIUM_SPENDER coupon for: {}", $customer.getName());
         insert(new Coupon("PREMIUM_SPENDER", 15.0, false));
 end
 
@@ -209,7 +210,7 @@ rule "Resolve Coupon Conflict - Disable Lower Value Coupon"
         $c2 : Coupon( used == false, code != $code1, $val2 : discountVal )
         eval($val1 > $val2 || ($val1 == $val2 && $code1.compareTo($c2.getCode()) > 0))
     then
-        System.out.println("[Customization Phase] Coupon conflict detected! Disabling lower value coupon: " + $c2.getCode() + " in favor of: " + $code1);
+        logger.info("[Customization Phase] Coupon conflict detected! Disabling lower value coupon: {} in favor of: {}", $c2.getCode(), $code1);
         modify($c2) {
             setUsed(true)
         }
@@ -225,7 +226,7 @@ rule "Dummy Post-Processing Rule"
     when
         $customer : CustomerFact()
     then
-        System.out.println("[Post-Processing Phase] Finalizing totals and rule summary for: " + $customer.getName());
+        logger.info("[Post-Processing Phase] Finalizing totals and rule summary for: {}", $customer.getName());
         $customer.addAppliedRule("[Phase: Post-Processing] Evaluation sequence completed");
 end
 
@@ -236,7 +237,7 @@ rule "Apply Unused Coupon"
         $coupon : Coupon( used == false, $code : code, $val : discountVal )
         $customer : CustomerFact()
     then
-        System.out.println("[Post-Processing Phase] Applying Coupon: " + $code + " (+" + $val + "%) for: " + $customer.getName());
+        logger.info("[Post-Processing Phase] Applying Coupon: {} (+{}%) for: {}", $code, $val, $customer.getName());
         modify($coupon) {
             setUsed(true)
         }

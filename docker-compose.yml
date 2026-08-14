@@ -30,6 +30,7 @@ services:
       - "4317:4317" # OTLP gRPC receiver
       - "4318:4318" # OTLP HTTP receiver
       - "8888:8888" # OTEL Collector internal metrics
+      - "8889:8889" # Prometheus scrape endpoint (OTel Collector metrics exporter)
     depends_on:
       - jaeger
     networks:
@@ -64,6 +65,37 @@ services:
     depends_on:
       - otel-collector
       - app
+    networks:
+      - otel-net
+
+  # 5. Prometheus (Metrics TSDB)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:z
+    ports:
+      - "9090:9090"
+    depends_on:
+      - app
+      - otel-collector
+    networks:
+      - otel-net
+
+  # 6. Grafana (Visualization UI)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:z
+    depends_on:
+      - prometheus
+      - jaeger
     networks:
       - otel-net
 

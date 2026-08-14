@@ -21,8 +21,18 @@ exporters:
     tls:
       insecure: true
 
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    namespace: "otel"
+
   debug:
     verbosity: detailed
+
+connectors:
+  spanmetrics:
+    histogram:
+      explicit:
+        buckets: [10ms, 100ms, 250ms, 1s, 5s, 10s]
 
 service:
   pipelines:
@@ -30,10 +40,11 @@ service:
       receivers: [otlp]
       processors: [memory_limiter, batch]
       exporters: [otlp/jaeger, debug]
+      connectors: [spanmetrics]
     metrics:
-      receivers: [otlp]
+      receivers: [otlp, spanmetrics]
       processors: [memory_limiter, batch]
-      exporters: [debug]
+      exporters: [prometheus, debug]
     logs:
       receivers: [otlp]
       processors: [memory_limiter, batch]
