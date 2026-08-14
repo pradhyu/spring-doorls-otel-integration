@@ -1,15 +1,20 @@
 package com.example.droolsotel.model;
 
+import com.example.droolsotel.otel.TelemetrySafe;
 import java.util.ArrayList;
 import java.util.List;
 
 public class CustomerFact {
+    @TelemetrySafe
     private String memberId;
     private String name;
     private int age;
+    @TelemetrySafe
     private String membershipTier;
     private double purchaseAmount;
+    @TelemetrySafe
     private double discountPercentage;
+    @TelemetrySafe
     private double finalAmount;
     private List<String> appliedRules = new ArrayList<>();
 

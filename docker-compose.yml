@@ -48,6 +48,26 @@ services:
     networks:
       - otel-net
 
+  # 4. Proxy Microservice
+  proxy:
+    build:
+      context: ./proxy-service
+      dockerfile: Dockerfile
+    container_name: proxy-service
+    ports:
+      - "8081:8081"
+    environment:
+      - SPRING_APPLICATION_NAME=proxy-service
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - DROOLS_APP_URL=http://drools-otel-app:8080/api/rules/execute
+      - LOGGING_LEVEL_COM_EXAMPLE_PROXY=DEBUG
+    depends_on:
+      - otel-collector
+      - app
+    networks:
+      - otel-net
+
 networks:
   otel-net:
     driver: bridge
+

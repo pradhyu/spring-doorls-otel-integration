@@ -8,11 +8,16 @@ import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.context.Scope;
 import org.kie.api.event.rule.*;
+import org.kie.api.runtime.rule.Match;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.lang.reflect.Field;
+import java.util.List;
 import java.util.Map;
+import java.util.Stack;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 public class DroolsOtelAgendaEventListener implements AgendaEventListener {
 
@@ -20,14 +25,32 @@ public class DroolsOtelAgendaEventListener implements AgendaEventListener {
 
     private final Tracer tracer;
     private final LongCounter rulesFiredCounter;
-    private final Map<org.kie.api.runtime.rule.Match, Span> activeRuleSpans = new ConcurrentHashMap<>();
-    private final Map<org.kie.api.runtime.rule.Match, Scope> activeScopes = new ConcurrentHashMap<>();
+    private final LongCounter matchesCreatedCounter;
+    private final LongCounter matchesCancelledCounter;
+
+    private final Map<Match, Span> activeRuleSpans = new ConcurrentHashMap<>();
+    private final Map<Match, Scope> activeScopes = new ConcurrentHashMap<>();
     private final ThreadLocal<Span> activeEvalSpan = new ThreadLocal<>();
+
+    // Stack to track active agenda groups per thread
+    private final ThreadLocal<Stack<String>> activeAgendaGroups = ThreadLocal.withInitial(() -> {
+        Stack<String> stack = new Stack<>();
+        stack.push("MAIN");
+        return stack;
+    });
 
     public DroolsOtelAgendaEventListener(Tracer tracer, Meter meter) {
         this.tracer = tracer;
         this.rulesFiredCounter = meter.counterBuilder("drools_rules_fired_total")
                 .setDescription("Total number of Drools rules fired")
+                .setUnit("1")
+                .build();
+        this.matchesCreatedCounter = meter.counterBuilder("drools_matches_created_total")
+                .setDescription("Total number of Drools rule matches created")
+                .setUnit("1")
+                .build();
+        this.matchesCancelledCounter = meter.counterBuilder("drools_matches_cancelled_total")
+                .setDescription("Total number of Drools rule matches cancelled")
                 .setUnit("1")
                 .build();
     }
@@ -49,12 +72,16 @@ public class DroolsOtelAgendaEventListener implements AgendaEventListener {
 
     @Override
     public void matchCreated(MatchCreatedEvent event) {
-        log.debug("Drools match created: {}", event.getMatch().getRule().getName());
+        String ruleName = event.getMatch().getRule().getName();
+        log.debug("Drools match created: {}", ruleName);
+        matchesCreatedCounter.add(1, Attributes.of(AttributeKey.stringKey("rule_name"), ruleName));
     }
 
     @Override
     public void matchCancelled(MatchCancelledEvent event) {
-        log.debug("Drools match cancelled: {}", event.getMatch().getRule().getName());
+        String ruleName = event.getMatch().getRule().getName();
+        log.debug("Drools match cancelled: {}", ruleName);
+        matchesCancelledCounter.add(1, Attributes.of(AttributeKey.stringKey("rule_name"), ruleName));
     }
 
     @Override
@@ -62,16 +89,33 @@ public class DroolsOtelAgendaEventListener implements AgendaEventListener {
         // End the active evaluation span when a rule starts executing
         endEvaluationSpan();
 
-        org.kie.api.runtime.rule.Match match = event.getMatch();
+        Match match = event.getMatch();
         String ruleName = match.getRule().getName();
         String packageName = match.getRule().getPackageName();
 
         log.info("Executing Drools Rule: [Package: {}, Rule: {}]", packageName, ruleName);
 
+        String currentGroup = activeAgendaGroups.get().peek();
+
+        // Extract matched facts safely
+        List<String> matchedFactTypes = match.getObjects().stream()
+                .map(obj -> obj.getClass().getSimpleName())
+                .collect(Collectors.toList());
+
         Span span = tracer.spanBuilder("drools.rule." + ruleName)
                 .setAttribute(AttributeKey.stringKey("drools.rule.name"), ruleName)
                 .setAttribute(AttributeKey.stringKey("drools.package.name"), packageName)
+                .setAttribute(AttributeKey.stringKey("drools.agenda_group"), currentGroup)
+                .setAttribute(AttributeKey.stringArrayKey("drools.matched_facts"), matchedFactTypes)
                 .startSpan();
+
+        // Add telemetry-safe summary of each matching fact as a span event
+        for (Object obj : match.getObjects()) {
+            span.addEvent("matched_fact_details", Attributes.of(
+                    AttributeKey.stringKey("fact.class"), obj.getClass().getSimpleName(),
+                    AttributeKey.stringKey("fact.summary"), getSafeSummary(obj)
+            ));
+        }
 
         Scope scope = span.makeCurrent();
         activeRuleSpans.put(match, span);
@@ -80,7 +124,7 @@ public class DroolsOtelAgendaEventListener implements AgendaEventListener {
 
     @Override
     public void afterMatchFired(AfterMatchFiredEvent event) {
-        org.kie.api.runtime.rule.Match match = event.getMatch();
+        Match match = event.getMatch();
         String ruleName = match.getRule().getName();
 
         Scope scope = activeScopes.remove(match);
@@ -102,10 +146,57 @@ public class DroolsOtelAgendaEventListener implements AgendaEventListener {
     }
 
     @Override
-    public void agendaGroupPopped(AgendaGroupPoppedEvent event) {}
+    public void agendaGroupPushed(AgendaGroupPushedEvent event) {
+        String groupName = event.getAgendaGroup().getName();
+        activeAgendaGroups.get().push(groupName);
+        log.debug("Agenda group pushed: {}", groupName);
+    }
 
     @Override
-    public void agendaGroupPushed(AgendaGroupPushedEvent event) {}
+    public void agendaGroupPopped(AgendaGroupPoppedEvent event) {
+        Stack<String> stack = activeAgendaGroups.get();
+        if (stack.size() > 1) { // Retain the "MAIN" base group
+            String popped = stack.pop();
+            log.debug("Agenda group popped: {}", popped);
+        }
+    }
+
+    private String getSafeSummary(Object obj) {
+        if (obj == null) return "null";
+        Class<?> clazz = obj.getClass();
+
+        // If the class is fully marked safe, use toString
+        if (clazz.isAnnotationPresent(TelemetrySafe.class)) {
+            return obj.toString();
+        }
+
+        // If it's a dynamic Drools declared type (e.g. Coupon, LoyaltyPoint) in rules package,
+        // it doesn't contain customer PII, only rule state, so it's safe to print fully.
+        if (clazz.getPackageName().startsWith("com.example.droolsotel.rules")) {
+            return obj.toString();
+        }
+
+        // Otherwise, inspect fields and serialize only those with @TelemetrySafe
+        StringBuilder sb = new StringBuilder(clazz.getSimpleName()).append("{");
+        boolean first = true;
+        for (Field field : clazz.getDeclaredFields()) {
+            if (field.isAnnotationPresent(TelemetrySafe.class)) {
+                try {
+                    field.setAccessible(true);
+                    Object val = field.get(obj);
+                    if (!first) {
+                        sb.append(", ");
+                    }
+                    sb.append(field.getName()).append("=").append(val);
+                    first = false;
+                } catch (Exception e) {
+                    // Ignore reflection errors
+                }
+            }
+        }
+        sb.append("}");
+        return sb.toString();
+    }
 
     @Override
     public void beforeRuleFlowGroupActivated(RuleFlowGroupActivatedEvent event) {}

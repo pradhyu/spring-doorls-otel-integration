@@ -69,4 +69,28 @@ class DroolsOtelApplicationTests {
         assertThat(response.getCustomer().getDiscountPercentage()).isEqualTo(15.0);
         assertThat(response.getCustomer().getFinalAmount()).isEqualTo(85.0);
     }
+
+    @Test
+    void testRuleConsequenceExceptionIsCaptured() {
+        CustomerFact customer = new CustomerFact("Bad Input", 25, "REGULAR", 100.0);
+        String failingDrl = "package com.example.droolsotel.rules;\n" +
+                "import com.example.droolsotel.model.CustomerFact;\n" +
+                "global com.example.droolsotel.service.CustomerDbService dbService;\n" +
+                "rule \"Failing Rule\"\n" +
+                "when\n" +
+                "    $c : CustomerFact( name == \"Bad Input\" )\n" +
+                "then\n" +
+                "    throw new RuntimeException(\"Simulated rule error\");\n" +
+                "end\n";
+        RuleExecutionRequest request = new RuleExecutionRequest(customer);
+        request.setCustomDrl(failingDrl);
+
+        ResponseEntity<String> response = restTemplate.postForEntity(
+                "/api/rules/execute",
+                request,
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+    }
 }

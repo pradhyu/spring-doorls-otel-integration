@@ -46,8 +46,19 @@ public class DroolsController {
                 .setAttribute("http.route", "/api/rules/execute")
                 .startSpan();
 
+        String requestId = request.getRequestId();
+        if (requestId == null || requestId.isEmpty()) {
+            requestId = "req-dummy-" + java.util.UUID.randomUUID().toString().substring(0, 8);
+        }
+        span.setAttribute("app.request_id", requestId);
+
+        if (request.getTransactionId() != null) {
+            span.setAttribute("app.transaction_id", request.getTransactionId());
+        }
+
         try (Scope scope = span.makeCurrent()) {
-            log.info("Received REST POST /api/rules/execute request [TraceID: {}]", span.getSpanContext().getTraceId());
+            log.info("Received REST POST /api/rules/execute request [TraceID: {}, RequestID: {}]", 
+                    span.getSpanContext().getTraceId(), requestId);
             RuleExecutionResponse response = executionService.executeRules(request);
             response.setTraceId(span.getSpanContext().getTraceId());
             response.setSpanId(span.getSpanContext().getSpanId());

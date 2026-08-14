@@ -3,6 +3,8 @@ package com.example.droolsotel.model;
 public class RuleExecutionRequest {
     private CustomerFact customer;
     private String customDrl;
+    private String transactionId;
+    private String requestId;
 
     public RuleExecutionRequest() {}
 
@@ -24,5 +26,21 @@ public class RuleExecutionRequest {
 
     public void setCustomDrl(String customDrl) {
         this.customDrl = customDrl;
+    }
+
+    public String getTransactionId() {
+        return transactionId;
+    }
+
+    public void setTransactionId(String transactionId) {
+        this.transactionId = transactionId;
+    }
+
+    public String getRequestId() {
+        return requestId;
+    }
+
+    public void setRequestId(String requestId) {
+        this.requestId = requestId;
     }
 }

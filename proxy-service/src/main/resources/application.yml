@@ -1,0 +1,15 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: proxy-service
+
+otel:
+  exporter:
+    otlp:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4317}
+
+drools:
+  app:
+    url: ${DROOLS_APP_URL:http://localhost:8080/api/rules/execute}

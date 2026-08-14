@@ -69,7 +69,11 @@ public class DroolsExecutionService {
                 activeContainer = createCustomKieContainer(request.getCustomDrl());
             }
 
-            KieSession kieSession = activeContainer.newKieSession();
+            // Configure custom ConsequenceExceptionHandler
+            org.kie.api.runtime.KieSessionConfiguration sessionConfig = kieServices.newKieSessionConfiguration();
+            sessionConfig.setProperty("drools.consequenceExceptionHandler", "com.example.droolsotel.otel.DroolsOtelConsequenceExceptionHandler");
+
+            KieSession kieSession = activeContainer.newKieSession(sessionConfig);
 
             // Set Database Service as a Global Variable
             kieSession.setGlobal("dbService", dbService);
@@ -77,7 +81,7 @@ public class DroolsExecutionService {
             // Register OpenTelemetry Event Listeners
             DroolsOtelAgendaEventListener agendaListener = new DroolsOtelAgendaEventListener(tracer, meter);
             kieSession.addEventListener(agendaListener);
-            kieSession.addEventListener(new DroolsOtelRuleRuntimeEventListener(tracer, meter));
+            kieSession.addEventListener(new DroolsOtelRuleRuntimeEventListener(meter));
 
             try {
                 Span fireRulesSpan = tracer.spanBuilder("drools.fireAllRules").startSpan();
@@ -93,8 +97,23 @@ public class DroolsExecutionService {
                     }
                     
                     Span fireInternalSpan = tracer.spanBuilder("drools.session.fireAllRulesInternal").startSpan();
+                    firedCount = 0;
                     try (Scope fireInternalScope = fireInternalSpan.makeCurrent()) {
-                        firedCount = kieSession.fireAllRules();
+                        String[] phases = {"prepare", "business-rules", "customization", "post-processing"};
+                        for (String phase : phases) {
+                            Span phaseSpan = tracer.spanBuilder("drools.phase." + phase)
+                                    .setAttribute("drools.engine.phase", phase)
+                                    .startSpan();
+                            try (Scope phaseScope = phaseSpan.makeCurrent()) {
+                                log.info("Activating Drools agenda group: {}", phase);
+                                kieSession.getAgenda().getAgendaGroup(phase).setFocus();
+                                int fired = kieSession.fireAllRules();
+                                phaseSpan.setAttribute("drools.rules_fired", (long) fired);
+                                firedCount += fired;
+                            } finally {
+                                phaseSpan.end();
+                            }
+                        }
                     } finally {
                         fireInternalSpan.end();
                     }
