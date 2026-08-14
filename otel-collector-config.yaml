@@ -29,7 +29,7 @@ exporters:
     verbosity: detailed
 
 connectors:
-  spanmetrics:
+  span_metrics:
     histogram:
       explicit:
         buckets: [10ms, 100ms, 250ms, 1s, 5s, 10s]
@@ -39,10 +39,9 @@ service:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [otlp/jaeger, debug]
-      connectors: [spanmetrics]
+      exporters: [otlp/jaeger, debug, span_metrics]
     metrics:
-      receivers: [otlp, spanmetrics]
+      receivers: [otlp, span_metrics]
       processors: [memory_limiter, batch]
       exporters: [prometheus, debug]
     logs:
