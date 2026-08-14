@@ -7,6 +7,8 @@ scrape_configs:
     metrics_path: '/actuator/prometheus'
     static_configs:
       - targets: ['drools-otel-app:8080']
+        labels:
+          application: 'drools-otel-app'
 
   - job_name: 'otel-collector'
     metrics_path: '/metrics'
