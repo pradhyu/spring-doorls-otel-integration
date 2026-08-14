@@ -12,3 +12,8 @@ INSERT INTO tier_discount (membership_tier, discount_percentage) VALUES ('GOLD',
 INSERT INTO tier_discount (membership_tier, discount_percentage) VALUES ('PLATINUM', 20.0);
 INSERT INTO tier_discount (membership_tier, discount_percentage) VALUES ('SILVER', 8.0);
 INSERT INTO tier_discount (membership_tier, discount_percentage) VALUES ('REGULAR', 0.0);
+
+-- Insert suspected members data
+DELETE FROM suspected_member;
+INSERT INTO suspected_member (name) VALUES ('Jane Doe');
+INSERT INTO suspected_member (name) VALUES ('Alice Smith');

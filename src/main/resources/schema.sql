@@ -7,3 +7,7 @@ CREATE TABLE IF NOT EXISTS tier_discount (
     membership_tier VARCHAR(50) PRIMARY KEY,
     discount_percentage DOUBLE NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS suspected_member (
+    name VARCHAR(100) PRIMARY KEY
+);

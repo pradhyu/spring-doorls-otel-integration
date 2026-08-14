@@ -30,6 +30,52 @@ rule "Dummy Prepare Rule"
         $customer.addAppliedRule("[Phase: Prepare] Rule engine processing initialized");
 end
 
+rule "Check Suspected Member Status"
+    agenda-group "prepare"
+    salience 600
+    when
+        $customer : CustomerFact( name != null && name != "", appliedRules not contains "Suspected Member Check" )
+    then
+        logger.info("[Prepare Phase] Checking if customer {} is flagged as suspected in HSQLDB...", $customer.getName());
+        boolean suspected = dbService.isSuspectedMember($customer.getName());
+        if (suspected) {
+            logger.warn("[Prepare Phase] ALERT: Customer {} is on the suspected members list!", $customer.getName());
+            modify($customer) {
+                addAppliedRule("Suspected Member Check"),
+                addAppliedRule("Flagged as Suspected Member")
+            }
+        } else {
+            modify($customer) {
+                addAppliedRule("Suspected Member Check")
+            }
+        }
+end
+
+rule "Check Suspected Member from Inserted Facts"
+    agenda-group "prepare"
+    salience 580
+    when
+        $customer : CustomerFact( name != null && name != "", appliedRules not contains "Suspected Member Fact Check" )
+        $suspectedName : String( this == $customer.getName() )
+    then
+        logger.warn("[Prepare Phase] ALERT: Customer {} matched a suspected member fact in memory!", $customer.getName());
+        modify($customer) {
+            addAppliedRule("Suspected Member Fact Check"),
+            addAppliedRule("Flagged as Suspected Member Fact")
+        }
+end
+
+rule "Clean up Suspected Member Fact Check Flag"
+    agenda-group "prepare"
+    salience 570
+    when
+        $customer : CustomerFact( appliedRules not contains "Suspected Member Fact Check" )
+    then
+        modify($customer) {
+            addAppliedRule("Suspected Member Fact Check")
+        }
+end
+
 rule "Fetch Membership Tier from Database"
     agenda-group "prepare"
     salience 500

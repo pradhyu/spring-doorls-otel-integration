@@ -17,3 +17,10 @@ datasources:
     editable: false
     jsonData:
       httpMode: GET
+
+  - name: prometheus-1
+    type: prometheus
+    uid: afv4eygce2wowc
+    access: proxy
+    url: http://prometheus:9090
+    editable: false

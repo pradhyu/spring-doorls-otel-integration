@@ -125,6 +125,12 @@ public class DroolsExecutionService {
 
                     try (Scope insertScope = insertSpan.makeCurrent()) {
                         kieSession.insert(customer);
+                        
+                        log.info("Loading suspected member facts from HSQLDB...");
+                        java.util.List<String> suspected = dbService.getAllSuspectedMembers();
+                        for (String name : suspected) {
+                            kieSession.insert(name);
+                        }
                     } finally {
                         insertSpan.end();
                     }

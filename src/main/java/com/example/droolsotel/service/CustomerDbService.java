@@ -6,6 +6,8 @@ import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.context.Scope;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import java.util.List;
+import java.util.ArrayList;
 
 @Service
 public class CustomerDbService {
@@ -72,6 +74,59 @@ public class CustomerDbService {
             span.recordException(e);
             span.setAttribute(AttributeKey.booleanKey("error"), true);
             return 0.0;
+        } finally {
+            span.end();
+        }
+    }
+
+    public boolean isSuspectedMember(String name) {
+        if (name == null || name.isBlank()) {
+            return false;
+        }
+
+        Span span = tracer.spanBuilder("db.isSuspectedMember")
+                .setAttribute(AttributeKey.stringKey("db.system"), "hsqldb")
+                .setAttribute(AttributeKey.stringKey("db.statement"), "SELECT COUNT(*) FROM suspected_member WHERE name = ?")
+                .setAttribute(AttributeKey.stringKey("db.customer_name"), name)
+                .startSpan();
+
+        try (Scope scope = span.makeCurrent()) {
+            span.addEvent("db_call_start");
+            Integer count = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM suspected_member WHERE name = ?",
+                    Integer.class,
+                    name
+            );
+            boolean result = count != null && count > 0;
+            span.setAttribute(AttributeKey.booleanKey("db.result.is_suspected"), result);
+            return result;
+        } catch (Exception e) {
+            span.recordException(e);
+            span.setAttribute(AttributeKey.booleanKey("error"), true);
+            return false;
+        } finally {
+            span.end();
+        }
+    }
+
+    public List<String> getAllSuspectedMembers() {
+        Span span = tracer.spanBuilder("db.getAllSuspectedMembers")
+                .setAttribute(AttributeKey.stringKey("db.system"), "hsqldb")
+                .setAttribute(AttributeKey.stringKey("db.statement"), "SELECT name FROM suspected_member")
+                .startSpan();
+
+        try (Scope scope = span.makeCurrent()) {
+            span.addEvent("db_call_start");
+            List<String> members = jdbcTemplate.query(
+                    "SELECT name FROM suspected_member",
+                    (rs, rowNum) -> rs.getString("name")
+            );
+            span.setAttribute(AttributeKey.longKey("db.result.count"), (long) members.size());
+            return members;
+        } catch (Exception e) {
+            span.recordException(e);
+            span.setAttribute(AttributeKey.booleanKey("error"), true);
+            return new ArrayList<>();
         } finally {
             span.end();
         }
